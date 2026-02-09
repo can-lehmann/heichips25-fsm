@@ -28,7 +28,8 @@ module heichips25_template (
         .rst_n(rst_n),
         .prog_enable(ui_in[7]),
         .prog_data(ui_in[0]),
-        .in(ui_in[0]),
+        .in(ui_in[3:0]),
+        .data_in(uio_in[7:0]),
         .state(state)
     );
 

@@ -48,8 +48,8 @@ module InstMem#(
   parameter STATE_COUNT = 8,
   parameter COND_WIDTH = 1,
   parameter ACTION_WIDTH = 1,
-  parameter CONST_WIDTH = 16,
-  parameter CONST_COUNT = 2
+  parameter COUNTER_WIDTH = 16,
+  parameter COUNTER_COUNT = 2
 ) (
   input clock,
   input rst_n,
@@ -58,18 +58,19 @@ module InstMem#(
   // State
   input [$clog2(STATE_COUNT)-1:0] addr,
   output [$clog2(STATE_COUNT)-1:0] jump_target,
+  output repeat_state,
+  output slow_mode,
   output [COND_WIDTH-1:0] cond,
   output [ACTION_WIDTH-1:0] then_action,
   output [ACTION_WIDTH-1:0] else_action,
   // Constants
-  input [$clog2(CONST_COUNT)-1:0] const_addr,
-  output [CONST_WIDTH-1:0] const_data
+  output [COUNTER_WIDTH * COUNTER_COUNT - 1:0] const_data
 );
 
   localparam STATE_WIDTH = $clog2(STATE_COUNT);
-  localparam WORD_WIDTH = STATE_WIDTH + COND_WIDTH + ACTION_WIDTH * 2;
-  localparam MEM_WIDTH = CONST_WIDTH * CONST_COUNT + WORD_WIDTH * STATE_COUNT;
-  localparam STATE_OFFSET = CONST_WIDTH * CONST_COUNT;
+  localparam WORD_WIDTH = STATE_WIDTH + 1 + 1 + COND_WIDTH + ACTION_WIDTH * 2;
+  localparam MEM_WIDTH = COUNTER_WIDTH * COUNTER_COUNT + WORD_WIDTH * STATE_COUNT;
+  localparam STATE_OFFSET = COUNTER_WIDTH * COUNTER_COUNT;
 
   wire [MEM_WIDTH-1:0] mem_data;
 
@@ -94,17 +95,12 @@ module InstMem#(
     .out(word)
   );
 
-  Mux #(
-    .WIDTH(CONST_WIDTH),
-    .COUNT(CONST_COUNT)
-  ) const_mux (
-    .addr(const_addr),
-    .data(mem_data[0 +: CONST_WIDTH * CONST_COUNT]),
-    .out(const_data)
-  );
+  assign const_data = mem_data[0 +: COUNTER_WIDTH * COUNTER_COUNT];
 
   assign jump_target = word[STATE_WIDTH-1:0];
-  assign cond = word[STATE_WIDTH +: COND_WIDTH];
-  assign then_action = word[STATE_WIDTH + COND_WIDTH +: ACTION_WIDTH];
-  assign else_action = word[STATE_WIDTH + COND_WIDTH + ACTION_WIDTH +: ACTION_WIDTH];
+  assign repeat_state = word[STATE_WIDTH];
+  assign slow_mode = word[STATE_WIDTH + 1];
+  assign cond = word[STATE_WIDTH + 1 + 1 +: COND_WIDTH];
+  assign then_action = word[STATE_WIDTH + 1 + 1 + COND_WIDTH +: ACTION_WIDTH];
+  assign else_action = word[STATE_WIDTH + 1 + 1 + COND_WIDTH + ACTION_WIDTH +: ACTION_WIDTH];
 endmodule
