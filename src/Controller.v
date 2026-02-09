@@ -63,27 +63,23 @@ module AluBuffer #(
 ) (
   input clock,
   input rst_n,
-  input [3:0] opcode,
+  input [2:0] opcode,
   input [7:0] data_in,
+  output [7:0] low8,
   output zero,
   output lsb
 );
 
   // Opcodes
-  // 0000: NOP
-  // 0001: Load data_in into buffer[7:0]
-  // 0010: Load data_in into buffer[15:8]
-  // 0011: Clear buffer
-  // 0100: Shift buffer right by 1, inserting 0 at the left
-  // 0101: Shift buffer right by 1, inserting data_in[0] at the left
-  // 0110: Shift buffer left by 1, inserting data_in[0] at the right
-  // 0111: Shift buffer[7:0] right by 1, inserting data_in[0] at buffer[7]
-  // 1000: Decrement buffer
-  // 1001: NOT buffer
-  // 1011: OR buffer with data_in
-  // 1100: XOR buffer with data_in
-  // 1101: Set buffer[8] to parity of buffer[7:0]
-  // 1110: Load data_in into buffer[23:16]
+  // 000: NOP
+  // 001: Load data_in into buffer[7:0], shifting the old buffer left by 8
+  // 010: Load data_in into buffer[15:8]
+  // 011: Clear buffer
+  // 100: Shift buffer right by 1, inserting 0 at the left
+  // 101: Shift buffer right by 1, inserting data_in[0] at the left
+  // 110: Shift buffer left by 1, inserting data_in[0] at the right
+  // 111: Shift buffer[7:0] right by 1, inserting data_in[0] at buffer[7]
+
 
   reg [WIDTH-1:0] buffer;
 
@@ -92,25 +88,49 @@ module AluBuffer #(
       buffer <= 0;
     else
       case (opcode)
-        4'b0000: ; // NOP
-        4'b0001: buffer <= {buffer[WIDTH-1:8], data_in};
-        4'b0010: buffer <= {buffer[WIDTH-1:16], data_in, buffer[7:0]};
-        4'b1110: buffer <= {data_in, buffer[15:0]};
-        4'b0011: buffer <= 0;
-        4'b0100: buffer <= {1'b0, buffer[WIDTH-1:1]};
-        4'b0101: buffer <= {data_in[0], buffer[WIDTH-1:1]};
-        4'b0110: buffer <= {buffer[WIDTH-2:0], data_in[0]};
-        4'b0111: buffer <= {buffer[WIDTH-1:8], data_in[0], buffer[7:1]};
-        4'b1000: buffer <= buffer - 1;
-        4'b1001: buffer <= ~buffer;
-        4'b1011: buffer <= {buffer[WIDTH-1:8], buffer[7:0] | data_in};
-        4'b1100: buffer <= {buffer[WIDTH-1:8], buffer[7:0] ^ data_in};
-        4'b1101: buffer[8] <= ~^buffer[7:0];
+        3'b000: ; // NOP
+        3'b001: buffer <= {buffer[WIDTH - 1 - 8:0], data_in};
+        3'b010: buffer[8] <= ~^buffer[7:0];
+        3'b011: buffer <= 0;
+        3'b100: buffer <= {1'b0, buffer[WIDTH-1:1]};
+        3'b101: buffer <= {data_in[0], buffer[WIDTH-1:1]};
+        3'b110: buffer <= {buffer[WIDTH-2:0], data_in[0]};
+        3'b111: buffer <= {buffer[WIDTH-1:8], data_in[0], buffer[7:1]};
         default: ; // NOP
       endcase
 
   assign zero = (buffer == 0);
   assign lsb = buffer[0];
+  assign low8 = buffer[7:0];
+endmodule
+
+module OutputController #(
+  parameter STATE_WIDTH = 3
+) (
+  input [3:0] opcode,
+  input [7:0] buffer_data,
+  input [STATE_WIDTH-1:0] state,
+  input zero_0,
+  input zero_1,
+  input alu_zero,
+  input alu_lsb,
+  output reg [7:0] out
+);
+
+  always @(*)
+    begin
+      out[7:5] = state;
+      out[4] = zero_0;
+      out[3] = zero_1;
+
+      casez (opcode)
+        4'b???0: out[2:0] = opcode[3:1];
+        4'b??01: out[2:0] = {opcode[3:2], alu_lsb};
+        4'b0011: out = buffer_data;
+        default: out[2:0] = 0;
+      endcase
+    end
+
 endmodule
 
 module Controller #(
@@ -121,9 +141,9 @@ module Controller #(
   input clock,
   input rst_n,
   input prog_enable,
-  input prog_data,
   input [INPUT_COUNT - 1:0] in,
   input [7:0] data_in,
+  output [7:0] out,
   output reg [$clog2(STATE_COUNT) - 1:0] state
 );
 
@@ -136,13 +156,13 @@ module Controller #(
   localparam COND_IS_ZERO_1 = 3'b001;
   localparam COND_IS_ALU_ZERO = 3'b010;
   localparam COND_IS_ALU_LSB = 3'b011;
-  localparam COND_INPUT_0 = 3'b100;
   
-  localparam ACTION_WIDTH = 3 + 4;
+  localparam ACTION_WIDTH = 3 + 3;
   
   wire [STATE_WIDTH-1:0] jump_target;
   wire repeat_state;
   wire slow_mode;
+  wire [3:0] output_opcode;
   wire [COND_WIDTH-1:0] cond;
   wire [ACTION_WIDTH-1:0] then_action;
   wire [ACTION_WIDTH-1:0] else_action;
@@ -156,7 +176,7 @@ module Controller #(
                    : cond == COND_IS_ZERO_1 ? zero_1
                    : cond == COND_IS_ALU_ZERO ? alu_zero
                    : cond == COND_IS_ALU_LSB ? alu_lsb
-                   : in[cond - COND_INPUT_0];
+                   : in[cond[1:0]];
 
   wire slow_mode_wait = slow_mode && !zero_1;
 
@@ -166,6 +186,7 @@ module Controller #(
   InstMem #(
     .STATE_COUNT(STATE_COUNT),
     .COND_WIDTH(COND_WIDTH),
+    .OUTPUT_WIDTH(4),
     .ACTION_WIDTH(ACTION_WIDTH),
     .COUNTER_WIDTH(COUNTER_WIDTH),
     .COUNTER_COUNT(2)
@@ -173,11 +194,12 @@ module Controller #(
     .clock(clock),
     .rst_n(rst_n),
     .prog_enable(prog_enable),
-    .prog_data(prog_data),
+    .prog_data(data_in),
     .addr(state),
     .jump_target(jump_target),
     .repeat_state(repeat_state),
     .slow_mode(slow_mode),
+    .output_opcode(output_opcode),
     .cond(cond),
     .then_action(then_action),
     .else_action(else_action),
@@ -185,7 +207,7 @@ module Controller #(
   );
 
   wire [2:0] counter_action = action[2:0];
-  wire [3:0] alu_buffer_action = action[6:3];
+  wire [2:0] alu_buffer_action = action[5:3];
 
   Counter2 #(
     .WIDTH(COUNTER_WIDTH)
@@ -200,26 +222,36 @@ module Controller #(
     .zero_1(zero_1)
   );
 
+  wire [7:0] alu_buffer_low8;
+
   AluBuffer alu_buffer (
     .clock(clock),
     .rst_n(rst_n),
-    .opcode(slow_mode_wait ? 4'b0 : alu_buffer_action),
+    .opcode(slow_mode_wait ? 3'b0 : alu_buffer_action),
     .data_in(data_in),
+    .low8(alu_buffer_low8),
     .zero(alu_zero),
     .lsb(alu_lsb)
   );
 
-  task reset();
-    begin
-      state <= 0;
-    end
-  endtask
+  OutputController #(
+    .STATE_WIDTH(STATE_WIDTH)
+  ) output_controller (
+    .opcode(output_opcode),
+    .buffer_data(alu_buffer_low8),
+    .state(state),
+    .zero_0(zero_0),
+    .zero_1(zero_1),
+    .alu_zero(alu_zero),
+    .alu_lsb(alu_lsb),
+    .out(out)
+  );
 
   always @(posedge clock)
     if (!rst_n)
-      reset();
+      state <= 0;
     else if (prog_enable)
-      reset();
+      state <= 0;
     else if (!slow_mode_wait)
       if (cond_result)
         state <= jump_target;

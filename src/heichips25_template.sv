@@ -20,6 +20,7 @@ module heichips25_template (
     localparam STATE_WIDTH = $clog2(STATE_COUNT);
 
     wire [STATE_WIDTH - 1:0] state;
+    wire [7:0] out;
 
     Controller #(
         .STATE_COUNT(STATE_COUNT)
@@ -27,15 +28,16 @@ module heichips25_template (
         .clock(clk),
         .rst_n(rst_n),
         .prog_enable(ui_in[7]),
-        .prog_data(ui_in[0]),
         .in(ui_in[3:0]),
         .data_in(uio_in[7:0]),
-        .state(state)
+        .state(state),
+        .out(out)
     );
 
-    assign uo_out = { {(8-STATE_WIDTH){1'b0}}, state };
+    assign uo_out = out;
 
-    assign uio_oe = '1;
-    assign uio_out = 0;
-    wire _unused = &{ena, uio_in[7:0], ui_in[6:1]};
+    assign uio_oe = 0; // All IOs are inputs in this example
+    assign uio_out = 0; // Not driving any outputs
+    
+    wire _unused = &{ena, uio_in[7:0], ui_in[6:1], state};
 endmodule
