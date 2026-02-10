@@ -78,7 +78,8 @@ module InstMem#(
   wire [MEM_WIDTH-1:0] mem_data;
 
   ShiftReg #(
-    .WIDTH(MEM_WIDTH)
+    .WIDTH(MEM_WIDTH),
+    .INPUT_WIDTH(INPUT_WIDTH)
   ) shiftreg (
     .clock(clock),
     .rst_n(rst_n),

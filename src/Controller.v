@@ -73,7 +73,7 @@ module AluBuffer #(
   // Opcodes
   // 000: NOP
   // 001: Load data_in into buffer[7:0], shifting the old buffer left by 8
-  // 010: Load data_in into buffer[15:8]
+  // 010: Set buffer[8] to the parity of buffer[7:0]
   // 011: Clear buffer
   // 100: Shift buffer right by 1, inserting 0 at the left
   // 101: Shift buffer right by 1, inserting data_in[0] at the left
@@ -184,6 +184,7 @@ module Controller #(
   wire [COUNTER_WIDTH * COUNTER_COUNT - 1:0] const_data;
 
   InstMem #(
+    .INPUT_WIDTH(8),
     .STATE_COUNT(STATE_COUNT),
     .COND_WIDTH(COND_WIDTH),
     .OUTPUT_WIDTH(4),
