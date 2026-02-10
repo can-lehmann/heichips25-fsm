@@ -7,7 +7,7 @@ from pathlib import Path
 import cocotb
 from cocotb.clock import Clock
 from cocotb.runner import get_runner
-from cocotb.triggers import Timer, ClockCycles
+from cocotb.triggers import Timer, ClockCycles, ReadOnly, NextTimeStep
 
 async def load_program(dut, program):
     dut.rst_n.value = 1
@@ -46,7 +46,7 @@ ACTION_WIDTH = 6
 Cond = Enum("Cond", [
     "IS_ZERO_0",
     "IS_ZERO_1",
-    "IS_ALU_ZERO",
+    "ALWAYS",
     "IS_ALU_LSB",
     "IN_0",
     "IN_1",
@@ -111,19 +111,33 @@ class StateDef:
     repeat_state: bool = False
     slow_mode: bool = False
 
+    @staticmethod
+    def placeholder():
+        return StateDef(
+            cond=Cond.IN_0,
+            output_opcode=OutputOpcode(),
+            repeat_state=False,
+            slow_mode=False,
+            then_action=Action(),
+            else_action=Action(),
+            jump_target=0
+        )
+
 def assemble(consts, states):
+    while len(states) < STATE_COUNT:
+        states.append(StateDef.placeholder())
+
     program = []
 
     def emit(value, width):
-        print(f"Emitting value {value} with width {width}")
         assert 0 <= value < (1 << width)
         nonlocal program
         for i in range(width):
             program.append((value >> i) & 1)
 
     def emit_action(action):
-        emit(action.alu.value - 1, 3)
         emit(action.counter.value, 3)
+        emit(action.alu.value - 1, 3)
 
     for const_id in range(COUNTER_COUNT):
         if const_id in consts:
@@ -144,13 +158,13 @@ def assemble(consts, states):
     for it in range((8 - len(program) % 8) % 8):
         program.append(0)
 
-    print(program)
-
     return program
+
+def get_state(dut):
+    return dut.uo_out[5].value | (dut.uo_out[6].value << 1) | (dut.uo_out[7].value << 2)
 
 @cocotb.test()
 async def counter_test(dut):
-    # Create a clock with a period of 10ns = 100MHz
     clock = Clock(dut.clk, 10, 'ns')
     await cocotb.start(clock.start())
 
@@ -171,16 +185,258 @@ async def counter_test(dut):
     dut.ui_in[0].value = 0
     expected_state = 0
     for i in range(10):
+        await ReadOnly()
+        assert get_state(dut) == expected_state
         await ClockCycles(dut.clk, 1)
-        state = dut.uo_out[5].value | (dut.uo_out[6].value << 1) | (dut.uo_out[7].value << 2)
-        assert state == expected_state
         expected_state = (expected_state + 1) % STATE_COUNT
     dut.ui_in[0].value = 1
     for i in range(10):
+        await ReadOnly()
+        assert get_state(dut) == expected_state
         await ClockCycles(dut.clk, 1)
-        state = dut.uo_out[5].value | (dut.uo_out[6].value << 1) | (dut.uo_out[7].value << 2)
-        assert state == expected_state
         expected_state = (expected_state - 1) % STATE_COUNT
+
+@cocotb.test()
+async def serialize8_test(dut):
+    clock = Clock(dut.clk, 10, 'ns')
+    await cocotb.start(clock.start())
+
+    await setup(dut)
+    await load_program(dut, assemble({
+        0: 7
+    }, [
+        StateDef(
+            cond = Cond.IN_0,
+            output_opcode = OutputOpcode(
+                const_1 = True
+            ),
+            repeat_state = True,
+            slow_mode = False,
+            then_action = Action(
+                alu = AluAction.LOAD_DATA_IN,
+                counter = CounterAction.RESET_0
+            ),
+            else_action = Action(),
+            jump_target = 1
+        ),
+        StateDef(
+            cond = Cond.IS_ZERO_0,
+            output_opcode = OutputOpcode(
+                buffer_lsb = True,
+                const_1 = False,
+                const_2 = True
+            ),
+            repeat_state = True,
+            slow_mode = False,
+            then_action = Action(),
+            else_action = Action(
+                alu = AluAction.SHIFT_RIGHT_ZERO,
+                counter = CounterAction.DECR_0
+            ),
+            jump_target = 0
+        )
+    ]))
+
+    for test_value in [123, 10, 0, 255]:
+        await ClockCycles(dut.clk, 10)
+        assert get_state(dut) == 0
+
+        dut.ui_in[0].value = 1
+        dut.uio_in.value = test_value
+        await ClockCycles(dut.clk, 1)
+        await ReadOnly()
+
+        assert get_state(dut) == 1
+
+        await NextTimeStep()
+        dut.ui_in[0].value = 0
+
+        serialized_value = 0
+        for it in range(8):
+            await ReadOnly()
+            serialized_value |= (dut.uo_out[0].value << it)
+            await ClockCycles(dut.clk, 1)
+        
+        assert serialized_value == test_value, f"Expected {test_value} but got {serialized_value}"
+
+@cocotb.test()
+async def serialize16_test(dut):
+    clock = Clock(dut.clk, 10, 'ns')
+    await cocotb.start(clock.start())
+
+    await setup(dut)
+    await load_program(dut, assemble({
+        0: 15
+    }, [
+        StateDef(
+            cond = Cond.IN_0,
+            output_opcode = OutputOpcode(
+                const_1 = True
+            ),
+            repeat_state = True,
+            slow_mode = False,
+            then_action = Action(
+                alu = AluAction.LOAD_DATA_IN,
+                counter = CounterAction.RESET_0
+            ),
+            else_action = Action(),
+            jump_target = 1
+        ),
+        StateDef(
+            cond = Cond.IN_0,
+            output_opcode = OutputOpcode(
+                const_1 = True
+            ),
+            repeat_state = True,
+            slow_mode = False,
+            then_action = Action(
+                alu = AluAction.LOAD_DATA_IN,
+                counter = CounterAction.RESET_0
+            ),
+            else_action = Action(),
+            jump_target = 2
+        ),
+        StateDef(
+            cond = Cond.IS_ZERO_0,
+            output_opcode = OutputOpcode(
+                buffer_lsb = True,
+                const_1 = False,
+                const_2 = True
+            ),
+            repeat_state = True,
+            slow_mode = False,
+            then_action = Action(),
+            else_action = Action(
+                alu = AluAction.SHIFT_RIGHT_ZERO,
+                counter = CounterAction.DECR_0
+            ),
+            jump_target = 0
+        )
+    ]))
+
+    for test_value in [12345, 10, 0, 255, 65535]:
+        await ClockCycles(dut.clk, 10)
+        assert get_state(dut) == 0
+
+        dut.ui_in[0].value = 1
+
+        dut.uio_in.value = (test_value >> 8) & 0xff
+        await ClockCycles(dut.clk, 1)
+
+        dut.ui_in[0].value = 0
+        await ClockCycles(dut.clk, test_value % 3)
+
+        dut.ui_in[0].value = 1
+        dut.uio_in.value = test_value & 0xff
+        await ClockCycles(dut.clk, 1)
+
+        await ReadOnly()
+        assert get_state(dut) == 2
+
+        await NextTimeStep()
+        dut.ui_in[0].value = 0
+
+        serialized_value = 0
+        for it in range(16):
+            await ReadOnly()
+            serialized_value |= (dut.uo_out[0].value << it)
+            await ClockCycles(dut.clk, 1)
+        
+        assert serialized_value == test_value, f"Expected {test_value} but got {serialized_value}"
+
+@cocotb.test()
+async def deserialize_test(dut):
+    clock = Clock(dut.clk, 10, 'ns')
+    await cocotb.start(clock.start())
+
+    await setup(dut)
+    await load_program(dut, assemble({
+        0: 7
+    }, [
+        # Initialize State, always jump to state 1
+        StateDef(
+            cond = Cond.ALWAYS,
+            output_opcode = OutputOpcode(),
+            repeat_state = False,
+            slow_mode = False,
+            then_action = Action(
+                alu = AluAction.CLEAR_BUFFER,
+                counter = CounterAction.RESET_0
+            ),
+            else_action = Action(),
+            jump_target = 1
+        ),
+        # Read 8 bits
+        StateDef(
+            cond = Cond.IS_ZERO_0,
+            output_opcode = OutputOpcode(const_1 = True),
+            repeat_state = True,
+            slow_mode = False,
+            then_action = Action(
+                alu = AluAction.SHIFT_RIGHT_LOW8_DATA_IN
+            ),
+            else_action = Action(
+                alu = AluAction.SHIFT_RIGHT_LOW8_DATA_IN,
+                counter = CounterAction.DECR_0
+            ),
+            jump_target = 2
+        ),
+        # Announce Valid and wait for Ready
+        StateDef(
+            cond = Cond.IN_1,
+            output_opcode = OutputOpcode(const_2 = True),
+            repeat_state = True,
+            slow_mode = False,
+            then_action = Action(),
+            else_action = Action(),
+            jump_target = 3
+        ),
+        # Output the deserialized value for one cycle, then jump back to state 0
+        StateDef(
+            cond = Cond.ALWAYS,
+            output_opcode = OutputOpcode(buffer = True),
+            repeat_state = False,
+            slow_mode = False,
+            then_action = Action(
+                alu = AluAction.CLEAR_BUFFER,
+                counter = CounterAction.RESET_0
+            ),
+            else_action = Action(),
+            jump_target = 1
+        )
+    ]))
+
+    for test_value in [123, 10, 0, 255]:
+        for it in range(10):
+            await ReadOnly()
+            if dut.uo_out[1].value == 1:
+                assert get_state(dut) == 1
+                break
+            await ClockCycles(dut.clk, 1)
+        else:
+            assert False
+        
+        await NextTimeStep()
+        for it in range(8):
+            dut.uio_in[0].value = (test_value >> it) & 1
+            await ClockCycles(dut.clk, 1)
+        
+        await ReadOnly()
+        assert get_state(dut) == 2
+
+        # Wait some arbitrary number of cycles before setting Ready
+        await ClockCycles(dut.clk, test_value % 3 + 2)
+
+        dut.ui_in[1].value = 1
+        await ClockCycles(dut.clk, 1)
+        await ReadOnly()
+
+        assert dut.uo_out.value == test_value, f"Expected {test_value} but got {dut.uo_out.value}"
+
+        await NextTimeStep()
+        dut.ui_in[1].value = 0
+
+        await ClockCycles(dut.clk, 1)
 
 
 """

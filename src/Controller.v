@@ -154,7 +154,7 @@ module Controller #(
   localparam COND_WIDTH = 3;
   localparam COND_IS_ZERO_0 = 3'b000;
   localparam COND_IS_ZERO_1 = 3'b001;
-  localparam COND_IS_ALU_ZERO = 3'b010;
+  localparam COND_ALWAYS = 3'b010;
   localparam COND_IS_ALU_LSB = 3'b011;
   
   localparam ACTION_WIDTH = 3 + 3;
@@ -174,7 +174,7 @@ module Controller #(
 
   wire cond_result = cond == COND_IS_ZERO_0 ? zero_0
                    : cond == COND_IS_ZERO_1 ? zero_1
-                   : cond == COND_IS_ALU_ZERO ? alu_zero
+                   : cond == COND_ALWAYS ? 1'b1
                    : cond == COND_IS_ALU_LSB ? alu_lsb
                    : in[cond[1:0]];
 
