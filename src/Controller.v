@@ -8,6 +8,7 @@ module Counter2 #(
 ) (
   input clock,
   input rst_n,
+  input prog_enable,
   input [2:0] opcode,
   input [WIDTH-1:0] const_0,
   input [WIDTH-1:0] const_1,
@@ -33,6 +34,11 @@ module Counter2 #(
         counter_0 <= 0;
         counter_1 <= 0;
       end
+    else if (prog_enable)
+      begin
+        counter_0 <= 0;
+        counter_1 <= 0;
+      end
     else
       case (opcode)
         3'b000: ; // NOP
@@ -49,7 +55,7 @@ module Counter2 #(
         3'b111:
           begin
             counter_0 <= counter_0 - 1;
-            counter_1 <= 0;
+            counter_1 <= const_1;
           end
         default: ; // NOP
       endcase
@@ -63,6 +69,7 @@ module AluBuffer #(
 ) (
   input clock,
   input rst_n,
+  input prog_enable,
   input [2:0] opcode,
   input [7:0] data_in,
   output [WIDTH-1:0] buffer_data,
@@ -84,6 +91,8 @@ module AluBuffer #(
 
   always @(posedge clock)
     if (!rst_n)
+      buffer <= 0;
+    else if (prog_enable)
       buffer <= 0;
     else
       case (opcode)
@@ -108,6 +117,7 @@ module OutputController #(
 ) (
   input clock,
   input rst_n,
+  input prog_enable,
   input [3:0] opcode,
   input [23:0] buffer_data,
   input [STATE_WIDTH-1:0] state,
@@ -118,10 +128,12 @@ module OutputController #(
   output reg [7:0] out
 );
 
+  reg [2:0] keep;
+
   always @(*)
     begin
       out[7:5] = state;
-      out[4] = zero_0;
+      out[4] = alu_zero;
       out[3] = zero_1;
 
       casez (opcode)
@@ -129,9 +141,18 @@ module OutputController #(
         4'b??01: out[2:0] = {opcode[3:2], alu_lsb};
         4'b0011: out = buffer_data[7:0];
         4'b0111: out = buffer_data[23:16];
+        4'b1111: out[2:0] = keep;
         default: out[2:0] = 0;
       endcase
     end
+  
+  always @(posedge clock)
+    if (!rst_n)
+      keep <= 0;
+    else if (prog_enable)
+      keep <= 0;
+    else
+      keep <= out[2:0];
 
 endmodule
 
@@ -263,6 +284,7 @@ module Controller #(
   ) counter2 (
     .clock(clock),
     .rst_n(rst_n),
+    .prog_enable(prog_enable),
     .opcode(slow_mode_wait ? 3'b110 : counter_action),
     .const_0(const_data[COUNTER_WIDTH-1:0]),
     .const_1(const_data[COUNTER_WIDTH*2-1:COUNTER_WIDTH]),
@@ -276,6 +298,7 @@ module Controller #(
   AluBuffer alu_buffer (
     .clock(clock),
     .rst_n(rst_n),
+    .prog_enable(prog_enable),
     .opcode(slow_mode_wait ? 3'b0 : alu_buffer_action),
     .data_in(data_in),
     .buffer_data(alu_buffer_data),
@@ -288,6 +311,7 @@ module Controller #(
   ) output_controller (
     .clock(clock),
     .rst_n(rst_n),
+    .prog_enable(prog_enable),
     .opcode(output_opcode),
     .buffer_data(alu_buffer_data),
     .state(state),

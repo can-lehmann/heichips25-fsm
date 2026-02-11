@@ -80,7 +80,8 @@ OutputMode = Enum("OutputMode", [
     "Default",
     "BufferHigh",
     "BufferLow",
-    "BufferLSB"
+    "BufferLSB",
+    "Keep"
 ])
 
 @dataclass
@@ -104,6 +105,8 @@ class OutputOpcode:
                 return 3
             case OutputMode.BufferLSB:
                 return 1 | (int(self.const_1) << 2) | (int(self.const_2) << 3)
+            case OutputMode.Keep:
+                return 15
         assert False
 
 @dataclass
@@ -141,8 +144,14 @@ class StateDef:
         )
 
 def assemble(consts, states):
-    while len(states) < STATE_COUNT:
-        states.append(None)
+    if type(states) is dict:
+        state_dict = states
+        states = [None] * STATE_COUNT
+        for key, value in state_dict.items():
+            states[key] = value
+    else:
+        while len(states) < STATE_COUNT:
+            states.append(None)
     
     extended_state = None
     for it, state in enumerate(states):
@@ -548,8 +557,6 @@ async def state_extension_test(dut):
         await ClockCycles(dut.clk, 1)
         await ReadOnly()
 
-        print(get_state(dut))
-
         assert get_state(dut) == expected_state, f"Expected state {expected_state} but got {get_state(dut)}"
 
 
@@ -558,65 +565,103 @@ async def pwm_test(dut):
     clock = Clock(dut.clk, 10, 'ns')
     await cocotb.start(clock.start())
 
-    await setup(dut)
-    await load_program(dut, assemble({
-        0: 4,
-        1: 3
-    }, [
-        # Initialize State, always jump to state 1
-        StateDef(
-            cond = Cond.ALWAYS,
-            output_opcode = OutputOpcode(),
-            repeat_state = False,
-            slow_mode = False,
-            then_action = Action(
-                alu = AluAction.LOAD_DATA_IN,
-                counter = CounterAction.RESET_BOTH
-            ),
-            else_action = Action(),
-            jump_target = 1
-        ),
-        # High phase
-        StateDef(
-            cond = Cond.IS_ALU_ZERO,
-            output_opcode = OutputOpcode(const_2 = True),
-            repeat_state = True,
-            slow_mode = True,
-            then_action = Action(
-                counter = CounterAction.RESET_1,
-            ),
-            else_action = Action(
-                counter = CounterAction.DECR_0_RESET_1,
-                alu = AluAction.DECR
-            ),
-            jump_target = 2
-        ),
-        # Low phase
-        StateDef(
-            cond = Cond.IS_ZERO_0,
-            output_opcode = OutputOpcode(),
-            repeat_state = True,
-            slow_mode = True,
-            then_action = Action(
-                counter = CounterAction.RESET_BOTH,
-                alu = AluAction.LOAD_DATA_IN
-            ),
-            else_action = Action(
-                counter = CounterAction.DECR_0_RESET_1,
-                alu = AluAction.DECR
-            ),
-            jump_target = 1
-        )
-    ]))
+    for (clock_divider, resolution) in [(1, 4), (3, 2), (3, 3)]:
+        await NextTimeStep()
 
-    dut.uio_in.value = 2
-    await ClockCycles(dut.clk, 1)
-    await ReadOnly()
+        IS_NEW_CYCLE = 0
+        WAIT = 1
+        SET_HIGH = 2
+        SET_LOW = 3
 
-    assert get_state(dut) == 1
-    await ClockCycles(dut.clk, 20)
+        await setup(dut)
+        await load_program(dut, assemble({
+            0: resolution,
+            1: clock_divider
+        }, {
+            IS_NEW_CYCLE: StateDef(
+                cond = Cond.IS_ZERO_0,
+                output_opcode = OutputOpcode(mode = OutputMode.Keep),
+                repeat_state = False,
+                slow_mode = False,
+                then_action = Action(
+                    alu = AluAction.LOAD_DATA_IN,
+                    counter = CounterAction.RESET_0
+                ),
+                extension = StateExtension(
+                    cond = Cond.IS_ALU_ZERO,
+                    then_action = Action(
+                        counter = CounterAction.DECR_0
+                    ),
+                    jump_target = WAIT
+                ),
+                else_action = Action(
+                    counter = CounterAction.DECR_0,
+                    alu = AluAction.DECR
+                ),
+                jump_target = WAIT
+            ),
+            WAIT: StateDef(
+                slow_mode=True,
+                output_opcode=OutputOpcode(mode = OutputMode.Keep),
+                cond=Cond.IS_ALU_ZERO,
+                repeat_state=False,
+                then_action=Action(
+                    counter=CounterAction.RESET_1
+                ),
+                else_action=Action(
+                    counter=CounterAction.RESET_1
+                ),
+                jump_target=SET_LOW
+            ),
+            SET_HIGH: StateDef(
+                cond = Cond.ALWAYS,
+                output_opcode = OutputOpcode(const_0 = True),
+                repeat_state = False,
+                slow_mode = False,
+                then_action = Action(),
+                else_action = Action(),
+                jump_target = IS_NEW_CYCLE
+            ),
+            SET_LOW: StateDef(
+                cond = Cond.ALWAYS,
+                output_opcode = OutputOpcode(),
+                repeat_state = False,
+                slow_mode = False,
+                then_action = Action(),
+                else_action = Action(),
+                jump_target = IS_NEW_CYCLE
+            )
+        }))
 
+        pwm_value = 0
+        dut.uio_in.value = pwm_value
 
+        await ClockCycles(dut.clk, 1)
+        await ReadOnly()
+
+        assert get_state(dut) == WAIT
+
+        for next_pwm_value in range(1, (resolution + 1) + 2):
+            print(f"Testing PWM value {pwm_value} / {resolution + 1}")
+            await NextTimeStep()
+            dut.uio_in.value = next_pwm_value
+
+            num, den = 0, 0
+            for it in range((3 + clock_divider) * (resolution + 1)):
+                await ClockCycles(dut.clk, 1)
+                await ReadOnly()
+                if dut.uo_out[0].value:
+                    print(f"  Cycle {it}: Output is HIGH")
+                    num += 1
+                else:
+                    print(f"  Cycle {it}: Output is LOW")
+                den += 1
+
+            duty_cycle = num / den
+            expected_duty_cycle = pwm_value / (resolution + 1)
+            assert duty_cycle == expected_duty_cycle, f"Expected duty cycle {expected_duty_cycle} but got {duty_cycle}"
+
+            pwm_value = next_pwm_value
 
 """
 # Ensure the otuput is 0x00
