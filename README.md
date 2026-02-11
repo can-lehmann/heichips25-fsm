@@ -2,6 +2,7 @@
 
 **Note:** This repository is a work in progress and may contain bugs or incomplete features.
 This repository is based on the heichips25 template repository, see the [original README](README_TEMPLATE.md).
+This project was inspired by the [PRISM](https://github.com/TinyTapeout/ttsky25a-tinyQV/blob/main/docs/user_peripherals/08_prism.md) reconfigurable state machine controller from the TinyTapeout tinyQV challenge.
 
 A programmable state machine controller for the Heichips25 tapeout.
 It can be programmed to implement a wide variety of state machine based designs, such as:
