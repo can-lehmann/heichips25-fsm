@@ -112,6 +112,12 @@ class Action:
     counter: CounterAction = CounterAction.NOP
 
 @dataclass
+class StateExtension:
+    cond: Cond
+    then_action: Action
+    jump_target: int
+
+@dataclass
 class StateDef:
     cond: Cond
     output_opcode: OutputOpcode
@@ -120,6 +126,7 @@ class StateDef:
     jump_target: int
     repeat_state: bool = False
     slow_mode: bool = False
+    extension: StateExtension = None
 
     @staticmethod
     def placeholder():
@@ -135,7 +142,27 @@ class StateDef:
 
 def assemble(consts, states):
     while len(states) < STATE_COUNT:
-        states.append(StateDef.placeholder())
+        states.append(None)
+    
+    extended_state = None
+    for it, state in enumerate(states):
+        if state is not None and state.extension is not None:
+            assert extended_state is None, "Only one state can have an extension"
+            extended_state = it
+            assert states[STATE_COUNT - 1] is None, "The last state is reserved for the extension. Cannot use it as a normal state."
+            states[STATE_COUNT - 1] = StateDef(
+                cond = state.extension.cond,
+                output_opcode = OutputOpcode(),
+                repeat_state = False,
+                slow_mode = False,
+                then_action = state.extension.then_action,
+                else_action = Action(),
+                jump_target = state.extension.jump_target
+            )
+
+    for it, state in enumerate(states):
+        if state is None:
+            states[it] = StateDef.placeholder()
 
     program = []
 
@@ -165,6 +192,10 @@ def assemble(consts, states):
         emit_action(inst.then_action)
         emit_action(inst.else_action)
     
+    if extended_state is None:
+        extended_state = STATE_COUNT - 1
+    emit(extended_state, STATE_WIDTH)
+
     for it in range((8 - len(program) % 8) % 8):
         program.append(0)
 
@@ -447,6 +478,80 @@ async def deserialize_test(dut):
         dut.ui_in[1].value = 0
 
         await ClockCycles(dut.clk, 1)
+
+
+@cocotb.test()
+async def state_extension_test(dut):
+    clock = Clock(dut.clk, 10, 'ns')
+    await cocotb.start(clock.start())
+
+    return_to_state_0 = StateDef(
+        cond = Cond.ALWAYS,
+        output_opcode = OutputOpcode(),
+        repeat_state = False,
+        slow_mode = False,
+        then_action = Action(),
+        else_action = Action(),
+        jump_target = 0
+    )
+
+    await setup(dut)
+    await load_program(dut, assemble({}, [
+        StateDef(
+            cond = Cond.IN_0,
+            output_opcode = OutputOpcode(),
+            repeat_state = True,
+            slow_mode = False,
+            then_action = Action(),
+            else_action = Action(),
+            jump_target = 1
+        ),
+        StateDef(
+            cond = Cond.IN_0,
+            jump_target = 3,
+            then_action = Action(),
+            output_opcode = OutputOpcode(),
+            repeat_state = False,
+            slow_mode = False,
+            else_action = Action(),
+            extension = StateExtension(
+                cond = Cond.IN_1,
+                then_action = Action(),
+                jump_target = 4
+            )
+        ),
+        return_to_state_0,
+        return_to_state_0,
+        return_to_state_0
+    ]))
+
+    for (in_0, in_1, expected_state) in [
+        (0, 0, 2),
+        (1, 0, 3),
+        (0, 1, 4),
+        (1, 1, 3)
+    ]:
+        await ClockCycles(dut.clk, 10)
+        await ReadOnly()
+        assert get_state(dut) == 0
+
+        await NextTimeStep()
+        dut.ui_in[0].value = 1
+        await ClockCycles(dut.clk, 1)
+        await ReadOnly()
+
+        assert get_state(dut) == 1
+        
+        await NextTimeStep()
+        dut.ui_in[0].value = in_0
+        dut.ui_in[1].value = in_1
+        await ClockCycles(dut.clk, 1)
+        await ReadOnly()
+
+        print(get_state(dut))
+
+        assert get_state(dut) == expected_state, f"Expected state {expected_state} but got {get_state(dut)}"
+
 
 @cocotb.test()
 async def pwm_test(dut):

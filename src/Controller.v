@@ -80,7 +80,6 @@ module AluBuffer #(
   // 110: Shift buffer left by 1, inserting data_in[0] at the right
   // 111: Decrement buffer
 
-
   reg [WIDTH-1:0] buffer;
 
   always @(posedge clock)
@@ -136,6 +135,28 @@ module OutputController #(
 
 endmodule
 
+module Cond(
+  input [2:0] opcode,
+  input zero_0,
+  input zero_1,
+  input alu_zero,
+  input [3:0] in,
+  output result
+);
+
+  localparam COND_IS_ZERO_0 = 3'b000;
+  localparam COND_IS_ZERO_1 = 3'b001;
+  localparam COND_ALWAYS = 3'b010;
+  localparam COND_IS_ALU_ZERO = 3'b011;
+
+  assign result = opcode == COND_IS_ZERO_0 ? zero_0
+                : opcode == COND_IS_ZERO_1 ? zero_1
+                : opcode == COND_ALWAYS ? 1'b1
+                : opcode == COND_IS_ALU_ZERO ? alu_zero
+                : in[opcode[1:0]];
+
+endmodule
+
 module Controller #(
   parameter STATE_COUNT = 8,
   parameter INPUT_COUNT = 4,
@@ -155,35 +176,55 @@ module Controller #(
   localparam STATE_WIDTH = $clog2(STATE_COUNT);
   
   localparam COND_WIDTH = 3;
-  localparam COND_IS_ZERO_0 = 3'b000;
-  localparam COND_IS_ZERO_1 = 3'b001;
-  localparam COND_ALWAYS = 3'b010;
-  localparam COND_IS_ALU_ZERO = 3'b011;
   
   localparam ACTION_WIDTH = 3 + 3;
   
   wire [STATE_WIDTH-1:0] jump_target;
+  wire [STATE_WIDTH-1:0] extended_jump_target;
   wire repeat_state;
   wire slow_mode;
   wire [3:0] output_opcode;
-  wire [COND_WIDTH-1:0] cond;
+  wire [COND_WIDTH-1:0] cond_opcode;
   wire [ACTION_WIDTH-1:0] then_action;
   wire [ACTION_WIDTH-1:0] else_action;
+
+  wire [STATE_WIDTH-1:0] extended_state;
+  wire [COND_WIDTH-1:0] extended_cond_opcode;
+  wire [ACTION_WIDTH-1:0] extended_then_action;
 
   wire zero_0;
   wire zero_1;
   wire alu_zero;
   wire alu_lsb;
 
-  wire cond_result = cond == COND_IS_ZERO_0 ? zero_0
-                   : cond == COND_IS_ZERO_1 ? zero_1
-                   : cond == COND_ALWAYS ? 1'b1
-                   : cond == COND_IS_ALU_ZERO ? alu_zero
-                   : in[cond[1:0]];
+  wire cond_result;
+  wire extended_cond_result;
+
+  Cond cond(
+    .opcode(cond_opcode),
+    .zero_0(zero_0),
+    .zero_1(zero_1),
+    .alu_zero(alu_zero),
+    .in(in),
+    .result(cond_result)
+  );
+
+  Cond extended_cond(
+    .opcode(extended_cond_opcode),
+    .zero_0(zero_0),
+    .zero_1(zero_1),
+    .alu_zero(alu_zero),
+    .in(in),
+    .result(extended_cond_result)
+  );
 
   wire slow_mode_wait = slow_mode && !zero_1;
+  wire is_extended = state == extended_state && extended_state != (STATE_COUNT - 1);
 
-  wire [ACTION_WIDTH-1:0] action = cond_result ? then_action : else_action;
+  wire [ACTION_WIDTH-1:0] action = cond_result ? then_action
+                                 : is_extended & extended_cond_result ? extended_then_action
+                                 : else_action;
+
   wire [COUNTER_WIDTH * COUNTER_COUNT - 1:0] const_data;
 
   InstMem #(
@@ -204,9 +245,13 @@ module Controller #(
     .repeat_state(repeat_state),
     .slow_mode(slow_mode),
     .output_opcode(output_opcode),
-    .cond(cond),
+    .cond_opcode(cond_opcode),
     .then_action(then_action),
     .else_action(else_action),
+    .extended_jump_target(extended_jump_target),
+    .extended_cond_opcode(extended_cond_opcode),
+    .extended_then_action(extended_then_action),
+    .extended_state(extended_state),
     .const_data(const_data)
   );
 
@@ -261,6 +306,8 @@ module Controller #(
     else if (!slow_mode_wait)
       if (cond_result)
         state <= jump_target;
+      else if (is_extended & extended_cond_result)
+        state <= extended_jump_target;
       else
         state <= repeat_state ? state : state + 1;
 

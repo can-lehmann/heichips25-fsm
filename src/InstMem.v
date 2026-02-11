@@ -63,16 +63,21 @@ module InstMem#(
   output repeat_state,
   output slow_mode,
   output [OUTPUT_WIDTH-1:0] output_opcode,
-  output [COND_WIDTH-1:0] cond,
+  output [COND_WIDTH-1:0] cond_opcode,
   output [ACTION_WIDTH-1:0] then_action,
   output [ACTION_WIDTH-1:0] else_action,
+  // Extended State
+  output [$clog2(STATE_COUNT)-1:0] extended_state,
+  output [COND_WIDTH-1:0] extended_cond_opcode,
+  output [ACTION_WIDTH-1:0] extended_then_action,
+  output [$clog2(STATE_COUNT)-1:0] extended_jump_target,
   // Constants
   output [COUNTER_WIDTH * COUNTER_COUNT - 1:0] const_data
 );
 
   localparam STATE_WIDTH = $clog2(STATE_COUNT);
   localparam WORD_WIDTH = STATE_WIDTH + 1 + 1 + OUTPUT_WIDTH + COND_WIDTH + ACTION_WIDTH * 2;
-  localparam MEM_WIDTH = COUNTER_WIDTH * COUNTER_COUNT + WORD_WIDTH * STATE_COUNT;
+  localparam MEM_WIDTH = COUNTER_WIDTH * COUNTER_COUNT + WORD_WIDTH * STATE_COUNT + STATE_WIDTH;
   localparam STATE_OFFSET = COUNTER_WIDTH * COUNTER_COUNT;
 
   wire [MEM_WIDTH-1:0] mem_data;
@@ -105,7 +110,16 @@ module InstMem#(
   assign repeat_state = word[STATE_WIDTH];
   assign slow_mode = word[STATE_WIDTH + 1];
   assign output_opcode = word[STATE_WIDTH + 1 + 1 +: OUTPUT_WIDTH];
-  assign cond = word[STATE_WIDTH + 1 + 1 + OUTPUT_WIDTH +: COND_WIDTH];
+  assign cond_opcode = word[STATE_WIDTH + 1 + 1 + OUTPUT_WIDTH +: COND_WIDTH];
   assign then_action = word[STATE_WIDTH + 1 + 1 + OUTPUT_WIDTH + COND_WIDTH +: ACTION_WIDTH];
   assign else_action = word[STATE_WIDTH + 1 + 1 + OUTPUT_WIDTH + COND_WIDTH + ACTION_WIDTH +: ACTION_WIDTH];
+
+  assign extended_state = mem_data[STATE_OFFSET + WORD_WIDTH * STATE_COUNT +: STATE_WIDTH];
+
+  localparam EXTENDED_STATE_ID = STATE_COUNT - 1;
+  wire [WORD_WIDTH-1:0] extended_word = mem_data[STATE_OFFSET + WORD_WIDTH * EXTENDED_STATE_ID +: WORD_WIDTH];
+  
+  assign extended_jump_target = extended_word[STATE_WIDTH-1:0];
+  assign extended_cond_opcode = extended_word[STATE_WIDTH + 1 + 1 + OUTPUT_WIDTH +: COND_WIDTH];
+  assign extended_then_action = extended_word[STATE_WIDTH + 1 + 1 + OUTPUT_WIDTH + COND_WIDTH +: ACTION_WIDTH];
 endmodule
