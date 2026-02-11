@@ -38,8 +38,8 @@ module Counter2 #(
         3'b000: ; // NOP
         3'b100:
           begin
-            counter_0 <= 0;
-            counter_1 <= 0;
+            counter_0 <= const_0;
+            counter_1 <= const_1;
           end
         3'b001: counter_0 <= const_0;
         3'b101: counter_1 <= const_1;
@@ -65,7 +65,7 @@ module AluBuffer #(
   input rst_n,
   input [2:0] opcode,
   input [7:0] data_in,
-  output [7:0] low8,
+  output [WIDTH-1:0] buffer_data,
   output zero,
   output lsb
 );
@@ -78,7 +78,7 @@ module AluBuffer #(
   // 100: Shift buffer right by 1, inserting 0 at the left
   // 101: Shift buffer right by 1, inserting data_in[0] at the left
   // 110: Shift buffer left by 1, inserting data_in[0] at the right
-  // 111: Shift buffer[7:0] right by 1, inserting data_in[0] at buffer[7]
+  // 111: Decrement buffer
 
 
   reg [WIDTH-1:0] buffer;
@@ -95,20 +95,22 @@ module AluBuffer #(
         3'b100: buffer <= {1'b0, buffer[WIDTH-1:1]};
         3'b101: buffer <= {data_in[0], buffer[WIDTH-1:1]};
         3'b110: buffer <= {buffer[WIDTH-2:0], data_in[0]};
-        3'b111: buffer <= {buffer[WIDTH-1:8], data_in[0], buffer[7:1]};
+        3'b111: buffer <= buffer - 1;
         default: ; // NOP
       endcase
 
   assign zero = (buffer == 0);
   assign lsb = buffer[0];
-  assign low8 = buffer[7:0];
+  assign buffer_data = buffer;
 endmodule
 
 module OutputController #(
   parameter STATE_WIDTH = 3
 ) (
+  input clock,
+  input rst_n,
   input [3:0] opcode,
-  input [7:0] buffer_data,
+  input [23:0] buffer_data,
   input [STATE_WIDTH-1:0] state,
   input zero_0,
   input zero_1,
@@ -126,7 +128,8 @@ module OutputController #(
       casez (opcode)
         4'b???0: out[2:0] = opcode[3:1];
         4'b??01: out[2:0] = {opcode[3:2], alu_lsb};
-        4'b0011: out = buffer_data;
+        4'b0011: out = buffer_data[7:0];
+        4'b0111: out = buffer_data[23:16];
         default: out[2:0] = 0;
       endcase
     end
@@ -155,7 +158,7 @@ module Controller #(
   localparam COND_IS_ZERO_0 = 3'b000;
   localparam COND_IS_ZERO_1 = 3'b001;
   localparam COND_ALWAYS = 3'b010;
-  localparam COND_IS_ALU_LSB = 3'b011;
+  localparam COND_IS_ALU_ZERO = 3'b011;
   
   localparam ACTION_WIDTH = 3 + 3;
   
@@ -175,7 +178,7 @@ module Controller #(
   wire cond_result = cond == COND_IS_ZERO_0 ? zero_0
                    : cond == COND_IS_ZERO_1 ? zero_1
                    : cond == COND_ALWAYS ? 1'b1
-                   : cond == COND_IS_ALU_LSB ? alu_lsb
+                   : cond == COND_IS_ALU_ZERO ? alu_zero
                    : in[cond[1:0]];
 
   wire slow_mode_wait = slow_mode && !zero_1;
@@ -223,14 +226,14 @@ module Controller #(
     .zero_1(zero_1)
   );
 
-  wire [7:0] alu_buffer_low8;
+  wire [23:0] alu_buffer_data;
 
   AluBuffer alu_buffer (
     .clock(clock),
     .rst_n(rst_n),
     .opcode(slow_mode_wait ? 3'b0 : alu_buffer_action),
     .data_in(data_in),
-    .low8(alu_buffer_low8),
+    .buffer_data(alu_buffer_data),
     .zero(alu_zero),
     .lsb(alu_lsb)
   );
@@ -238,8 +241,10 @@ module Controller #(
   OutputController #(
     .STATE_WIDTH(STATE_WIDTH)
   ) output_controller (
+    .clock(clock),
+    .rst_n(rst_n),
     .opcode(output_opcode),
-    .buffer_data(alu_buffer_low8),
+    .buffer_data(alu_buffer_data),
     .state(state),
     .zero_0(zero_0),
     .zero_1(zero_1),

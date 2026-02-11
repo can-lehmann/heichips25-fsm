@@ -47,7 +47,7 @@ Cond = Enum("Cond", [
     "IS_ZERO_0",
     "IS_ZERO_1",
     "ALWAYS",
-    "IS_ALU_LSB",
+    "IS_ALU_ZERO",
     "IN_0",
     "IN_1",
     "IN_2",
@@ -73,28 +73,38 @@ AluAction = Enum("AluAction", [
     "SHIFT_RIGHT_ZERO",
     "SHIFT_RIGHT_DATA_IN",
     "SHIFT_LEFT_DATA_IN",
-    "SHIFT_RIGHT_LOW8_DATA_IN"
+    "DECR"
+])
+
+OutputMode = Enum("OutputMode", [
+    "Default",
+    "BufferHigh",
+    "BufferLow",
+    "BufferLSB"
 ])
 
 @dataclass
 class OutputOpcode:
-    buffer: bool = False
-    buffer_lsb: bool = False
+    mode: OutputMode = OutputMode.Default
     const_0: bool = False
     const_1: bool = False
     const_2: bool = False
 
     def encode(self):
-        if self.buffer:
-            return 3
-        elif self.buffer_lsb:
-            return 1 | (int(self.const_1) << 2) | (int(self.const_2) << 3)
-        else:
-            res = 0
-            res |= int(self.const_0) << 1
-            res |= int(self.const_1) << 2
-            res |= int(self.const_2) << 3
-            return res
+        match self.mode:
+            case OutputMode.Default:
+                res = 0
+                res |= int(self.const_0) << 1
+                res |= int(self.const_1) << 2
+                res |= int(self.const_2) << 3
+                return res
+            case OutputMode.BufferHigh:
+                return 7
+            case OutputMode.BufferLow:
+                return 3
+            case OutputMode.BufferLSB:
+                return 1 | (int(self.const_1) << 2) | (int(self.const_2) << 3)
+        assert False
 
 @dataclass
 class Action:
@@ -222,7 +232,7 @@ async def serialize8_test(dut):
         StateDef(
             cond = Cond.IS_ZERO_0,
             output_opcode = OutputOpcode(
-                buffer_lsb = True,
+                mode = OutputMode.BufferLSB,
                 const_1 = False,
                 const_2 = True
             ),
@@ -299,7 +309,7 @@ async def serialize16_test(dut):
         StateDef(
             cond = Cond.IS_ZERO_0,
             output_opcode = OutputOpcode(
-                buffer_lsb = True,
+                mode = OutputMode.BufferLSB,
                 const_1 = False,
                 const_2 = True
             ),
@@ -373,10 +383,10 @@ async def deserialize_test(dut):
             repeat_state = True,
             slow_mode = False,
             then_action = Action(
-                alu = AluAction.SHIFT_RIGHT_LOW8_DATA_IN
+                alu = AluAction.SHIFT_RIGHT_DATA_IN
             ),
             else_action = Action(
-                alu = AluAction.SHIFT_RIGHT_LOW8_DATA_IN,
+                alu = AluAction.SHIFT_RIGHT_DATA_IN,
                 counter = CounterAction.DECR_0
             ),
             jump_target = 2
@@ -394,7 +404,7 @@ async def deserialize_test(dut):
         # Output the deserialized value for one cycle, then jump back to state 0
         StateDef(
             cond = Cond.ALWAYS,
-            output_opcode = OutputOpcode(buffer = True),
+            output_opcode = OutputOpcode(mode = OutputMode.BufferHigh),
             repeat_state = False,
             slow_mode = False,
             then_action = Action(
@@ -437,6 +447,70 @@ async def deserialize_test(dut):
         dut.ui_in[1].value = 0
 
         await ClockCycles(dut.clk, 1)
+
+@cocotb.test()
+async def pwm_test(dut):
+    clock = Clock(dut.clk, 10, 'ns')
+    await cocotb.start(clock.start())
+
+    await setup(dut)
+    await load_program(dut, assemble({
+        0: 4,
+        1: 3
+    }, [
+        # Initialize State, always jump to state 1
+        StateDef(
+            cond = Cond.ALWAYS,
+            output_opcode = OutputOpcode(),
+            repeat_state = False,
+            slow_mode = False,
+            then_action = Action(
+                alu = AluAction.LOAD_DATA_IN,
+                counter = CounterAction.RESET_BOTH
+            ),
+            else_action = Action(),
+            jump_target = 1
+        ),
+        # High phase
+        StateDef(
+            cond = Cond.IS_ALU_ZERO,
+            output_opcode = OutputOpcode(const_2 = True),
+            repeat_state = True,
+            slow_mode = True,
+            then_action = Action(
+                counter = CounterAction.RESET_1,
+            ),
+            else_action = Action(
+                counter = CounterAction.DECR_0_RESET_1,
+                alu = AluAction.DECR
+            ),
+            jump_target = 2
+        ),
+        # Low phase
+        StateDef(
+            cond = Cond.IS_ZERO_0,
+            output_opcode = OutputOpcode(),
+            repeat_state = True,
+            slow_mode = True,
+            then_action = Action(
+                counter = CounterAction.RESET_BOTH,
+                alu = AluAction.LOAD_DATA_IN
+            ),
+            else_action = Action(
+                counter = CounterAction.DECR_0_RESET_1,
+                alu = AluAction.DECR
+            ),
+            jump_target = 1
+        )
+    ]))
+
+    dut.uio_in.value = 2
+    await ClockCycles(dut.clk, 1)
+    await ReadOnly()
+
+    assert get_state(dut) == 1
+    await ClockCycles(dut.clk, 20)
+
 
 
 """
