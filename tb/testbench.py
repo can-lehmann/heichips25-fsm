@@ -1,5 +1,6 @@
-# SPDX-FileCopyrightText: © 2025 XXX Authors
+# Copyright (c) 2026 Can Joshua Lehmann
 # SPDX-License-Identifier: Apache-2.0
+# Based on the original testbench.py from the heichips25 template repository
 
 import os
 import sys
@@ -13,12 +14,13 @@ async def load_program(dut, program):
     dut.rst_n.value = 1
     await ClockCycles(dut.clk, 1)
     dut.ui_in[7].value = 1
-    it = len(program) - 8
+    INPUT_WIDTH = 1
+    it = len(program) - INPUT_WIDTH
     while it >= 0:
-        for it2 in range(8):
+        for it2 in range(INPUT_WIDTH):
             dut.uio_in[it2].value = program[it + it2]
         await ClockCycles(dut.clk, 1)
-        it -= 8
+        it -= INPUT_WIDTH
     dut.ui_in[7].value = 0
 
 async def setup(dut, duration_ns=100):

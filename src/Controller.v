@@ -249,7 +249,7 @@ module Controller #(
   wire [COUNTER_WIDTH * COUNTER_COUNT - 1:0] const_data;
 
   InstMem #(
-    .INPUT_WIDTH(8),
+    .INPUT_WIDTH(1),
     .STATE_COUNT(STATE_COUNT),
     .COND_WIDTH(COND_WIDTH),
     .OUTPUT_WIDTH(4),
@@ -260,7 +260,7 @@ module Controller #(
     .clock(clock),
     .rst_n(rst_n),
     .prog_enable(prog_enable),
-    .prog_data(data_in),
+    .prog_data(data_in[0]),
     .addr(state),
     .jump_target(jump_target),
     .repeat_state(repeat_state),
