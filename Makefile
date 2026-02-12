@@ -196,6 +196,9 @@ tb/sim_build/%.svg: tb/sim_build/%.dot
 	dot -Tsvg $< -o $@
 
 all-dot: $(patsubst tb/sim_build/%.dot, tb/sim_build/%.svg, $(wildcard tb/sim_build/*.dot))
+	cp tb/sim_build/pwm_3_2.svg doc/
+	cp tb/sim_build/serialize16.svg doc/
+	cp tb/sim_build/uart_tx.svg doc/
 
 # Common
 

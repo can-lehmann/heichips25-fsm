@@ -225,7 +225,7 @@ def save_dot(path, states, constants):
                 if state.extension is not None:
                     transition(
                         it,
-                        f"!{format_cond(state.cond)} & {format_cond(state.extension.cond)}",
+                        f"!({format_cond(state.cond)}) & {format_cond(state.extension.cond)}",
                         state.extension.jump_target,
                         state.extension.then_action
                     )
@@ -233,12 +233,12 @@ def save_dot(path, states, constants):
                         continue
                     transition(
                         it,
-                        f"!{format_cond(state.cond)} & !{format_cond(state.extension.cond)}",
+                        f"!({format_cond(state.cond)}) & !({format_cond(state.extension.cond)})",
                         else_target,
                         state.else_action
                     )
                 else:
-                    transition(it, f"!{format_cond(state.cond)}", else_target, state.else_action)
+                    transition(it, f"!({format_cond(state.cond)})", else_target, state.else_action)
         
         f.write("}\n")
 
