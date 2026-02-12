@@ -56,6 +56,7 @@ module InstMem#(
   input clock,
   input rst_n,
   input prog_enable,
+  input prog_advance,
   input [INPUT_WIDTH-1:0] prog_data,
   // State
   input [$clog2(STATE_COUNT)-1:0] addr,
@@ -88,7 +89,7 @@ module InstMem#(
   ) shiftreg (
     .clock(clock),
     .rst_n(rst_n),
-    .write_enable(prog_enable),
+    .write_enable(prog_enable & prog_advance),
     .write_data(prog_data),
     .read_data(mem_data)
   );

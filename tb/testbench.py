@@ -13,7 +13,8 @@ from cocotb.triggers import Timer, ClockCycles, ReadOnly, NextTimeStep
 async def load_program(dut, program):
     dut.rst_n.value = 1
     await ClockCycles(dut.clk, 1)
-    dut.ui_in[7].value = 1
+    dut.ui_in[6].value = 1
+    dut.ui_in[5].value = 1
     INPUT_WIDTH = 1
     it = len(program) - INPUT_WIDTH
     while it >= 0:
@@ -21,7 +22,8 @@ async def load_program(dut, program):
             dut.uio_in[it2].value = program[it + it2]
         await ClockCycles(dut.clk, 1)
         it -= INPUT_WIDTH
-    dut.ui_in[7].value = 0
+    dut.ui_in[6].value = 0
+    dut.ui_in[5].value = 0
 
 async def setup(dut, duration_ns=100):
     dut.ena.value = 1
@@ -955,7 +957,7 @@ if __name__ == "__main__":
     sources = []#[testbench_path / 'testbench.sv']
     defines = {}
 
-    MACRO_NL = testbench_path / '../macro/nl/heichips25_template.nl.v'
+    MACRO_NL = testbench_path / '../macro/nl/heichips25_can_lehmann_fsm.nl.v'
 
     if gl:
         if not MACRO_NL.exists():
@@ -969,7 +971,7 @@ if __name__ == "__main__":
         sources.extend(list(testbench_path.glob('../src/*')))
         defines = {'RTL': True}
 
-    hdl_toplevel = "heichips25_template"
+    hdl_toplevel = "heichips25_can_lehmann_fsm"
 
     runner = get_runner(sim)
     runner.build(

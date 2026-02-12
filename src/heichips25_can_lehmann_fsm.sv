@@ -5,7 +5,7 @@
 
 `default_nettype none
 
-module heichips25_template (
+module heichips25_can_lehmann_fsm (
     input  wire [7:0] ui_in,    // Dedicated inputs
     output wire [7:0] uo_out,   // Dedicated outputs
     input  wire [7:0] uio_in,   // IOs: Input path
@@ -27,7 +27,8 @@ module heichips25_template (
     ) controller (
         .clock(clk),
         .rst_n(rst_n),
-        .prog_enable(ui_in[7]),
+        .prog_enable(ui_in[6]),
+        .prog_advance(ui_in[5]),
         .in(ui_in[3:0]),
         .data_in(uio_in[7:0]),
         .state(state),
