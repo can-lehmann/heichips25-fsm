@@ -110,11 +110,49 @@ class OutputOpcode:
             case OutputMode.Keep:
                 return 15
         assert False
+    
+    def __str__(self):
+        match self.mode:
+            case OutputMode.Default:
+                return f"{int(self.const_0)}, {int(self.const_1)}, {int(self.const_2)}"
+            case OutputMode.BufferLSB:
+                return f"lsb, {int(self.const_1)}, {int(self.const_2)}"
+            case _:
+                return self.mode.name
 
 @dataclass
 class Action:
     alu: AluAction = AluAction.NOP
     counter: CounterAction = CounterAction.NOP
+
+    def format(self, constants):
+        cmds = []
+
+        match self.alu:
+            case AluAction.NOP: pass
+            case AluAction.LOAD_DATA_IN: cmds.append("buf = data_in")
+            case AluAction.PARITY: cmds.append("buf = parity(buf)")
+            case AluAction.CLEAR_BUFFER: cmds.append("buf = 0")
+            case AluAction.SHIFT_RIGHT_ZERO: cmds.append("buf >>= 1")
+            case AluAction.SHIFT_RIGHT_DATA_IN: cmds.append("buf >>= {data_in[0], buf[23:1]}")
+            case AluAction.SHIFT_LEFT_DATA_IN: cmds.append("buf = {buf[22:0], data_in[0]}")
+            case AluAction.DECR: cmds.append("buf -= 1")
+        
+        match self.counter:
+            case CounterAction.NOP: pass
+            case CounterAction.RESET_0: cmds.append(f"counter_0 = {constants[0]}")
+            case CounterAction.RESET_1: cmds.append(f"counter_1 = {constants[1]}")
+            case CounterAction.DECR_0: cmds.append("counter_0 -= 1")
+            case CounterAction.DECR_1: cmds.append("counter_1 -= 1")
+            case CounterAction.LOAD_DATA_IN_0: cmds.append("counter_0 = data_in")
+            case CounterAction.RESET_BOTH:
+                cmds.append(f"counter_0 = {constants[0]}")
+                cmds.append(f"counter_1 = {constants[1]}")
+            case CounterAction.DECR_0_RESET_1:
+                cmds.append("counter_0 -= 1")
+                cmds.append(f"counter_1 = {constants[1]}")
+
+        return cmds
 
 @dataclass
 class StateExtension:
@@ -132,6 +170,7 @@ class StateDef:
     repeat_state: bool = False
     slow_mode: bool = False
     extension: StateExtension = None
+    doc: str = ""
 
     @staticmethod
     def placeholder():
@@ -145,7 +184,65 @@ class StateDef:
             jump_target=0
         )
 
-def assemble(consts, states):
+def save_dot(path, states, constants):
+    with open(path, "w") as f:
+        f.write("digraph {\n")
+        f.write("rankdir=LR;\n")
+        f.write("node [fontname=\"Noto Sans\"];\n")
+        f.write("edge [fontname=\"Noto Sans\"];\n")
+
+        for it, state in enumerate(states):
+            if state is not None:
+                label = f"State {it}\\n"
+                if state.doc:
+                    label += state.doc + "\\n"
+                label += f"Output = {state.output_opcode}"
+                if state.slow_mode:
+                    label += "\\n(Wait for counter_1)"
+                f.write(f"s{it} [shape=box, label=\"{label}\"];\n")
+        
+        def format_cond(cond):
+            match cond:
+                case Cond.IS_ZERO_0: return "counter_0 == 0"
+                case Cond.IS_ZERO_1: return "counter_1 == 0"
+                case Cond.ALWAYS: return "1"
+                case Cond.IS_ALU_ZERO: return "buf == 0"
+                case Cond.IN_0: return "in[0]"
+                case Cond.IN_1: return "in[1]"
+                case Cond.IN_2: return "in[2]"
+                case Cond.IN_3: return "in[3]"
+
+        def transition(from_state, cond, to_state, action):
+            label = "\\n".join((["if " + cond] if cond != "1" else []) + action.format(constants))
+            f.write(f"s{from_state} -> s{to_state} [label=\"{label}\"];\n")
+        
+        for it, state in enumerate(states):
+            if state is not None:
+                transition(it, format_cond(state.cond), state.jump_target, state.then_action)
+                else_target = it if state.repeat_state else (it + 1) % STATE_COUNT
+                if state.cond == Cond.ALWAYS:
+                    continue
+                if state.extension is not None:
+                    transition(
+                        it,
+                        f"!{format_cond(state.cond)} & {format_cond(state.extension.cond)}",
+                        state.extension.jump_target,
+                        state.extension.then_action
+                    )
+                    if state.extension.cond == Cond.ALWAYS:
+                        continue
+                    transition(
+                        it,
+                        f"!{format_cond(state.cond)} & !{format_cond(state.extension.cond)}",
+                        else_target,
+                        state.else_action
+                    )
+                else:
+                    transition(it, f"!{format_cond(state.cond)}", else_target, state.else_action)
+        
+        f.write("}\n")
+
+def assemble(consts, states, path=None):
     if type(states) is dict:
         state_dict = states
         states = [None] * STATE_COUNT
@@ -154,6 +251,9 @@ def assemble(consts, states):
     else:
         while len(states) < STATE_COUNT:
             states.append(None)
+
+    if path is not None:
+        save_dot(path, states, consts)
     
     extended_state = None
     for it, state in enumerate(states):
@@ -232,7 +332,7 @@ async def counter_test(dut):
             jump_target=(i - 1 + STATE_COUNT) % STATE_COUNT
         )
         for i in range(STATE_COUNT)
-    ]))
+    ], path="counter.dot"))
 
     dut.ui_in[0].value = 0
     expected_state = 0
@@ -287,7 +387,7 @@ async def serialize8_test(dut):
             ),
             jump_target = 0
         )
-    ]))
+    ], path="serialize8.dot"))
 
     for test_value in [123, 10, 0, 255]:
         await ClockCycles(dut.clk, 10)
@@ -364,7 +464,7 @@ async def serialize16_test(dut):
             ),
             jump_target = 0
         )
-    ]))
+    ], path="serialize16.dot"))
 
     for test_value in [12345, 10, 0, 255, 65535]:
         await ClockCycles(dut.clk, 10)
@@ -456,7 +556,7 @@ async def deserialize_test(dut):
             else_action = Action(),
             jump_target = 1
         )
-    ]))
+    ], path="deserialize.dot"))
 
     for test_value in [123, 10, 0, 255]:
         for it in range(10):
@@ -534,7 +634,7 @@ async def state_extension_test(dut):
         return_to_state_0,
         return_to_state_0,
         return_to_state_0
-    ]))
+    ], path="state_extension.dot"))
 
     for (in_0, in_1, expected_state) in [
         (0, 0, 2),
@@ -581,6 +681,7 @@ async def pwm_test(dut):
             1: clock_divider
         }, {
             IS_NEW_CYCLE: StateDef(
+                doc = "Is New Cycle?",
                 cond = Cond.IS_ZERO_0,
                 output_opcode = OutputOpcode(mode = OutputMode.Keep),
                 repeat_state = False,
@@ -603,6 +704,7 @@ async def pwm_test(dut):
                 jump_target = WAIT
             ),
             WAIT: StateDef(
+                doc = "Wait",
                 slow_mode=True,
                 output_opcode=OutputOpcode(mode = OutputMode.Keep),
                 cond=Cond.IS_ALU_ZERO,
@@ -616,6 +718,7 @@ async def pwm_test(dut):
                 jump_target=SET_LOW
             ),
             SET_HIGH: StateDef(
+                doc = "Set High",
                 cond = Cond.ALWAYS,
                 output_opcode = OutputOpcode(const_0 = True),
                 repeat_state = False,
@@ -625,6 +728,7 @@ async def pwm_test(dut):
                 jump_target = IS_NEW_CYCLE
             ),
             SET_LOW: StateDef(
+                doc = "Set Low",
                 cond = Cond.ALWAYS,
                 output_opcode = OutputOpcode(),
                 repeat_state = False,
@@ -633,7 +737,7 @@ async def pwm_test(dut):
                 else_action = Action(),
                 jump_target = IS_NEW_CYCLE
             )
-        }))
+        }, path=f"pwm_{clock_divider}_{resolution}.dot"))
 
         pwm_value = 0
         dut.uio_in.value = pwm_value
@@ -677,6 +781,7 @@ async def uart_tx_test(dut):
     }, [
         # Stop Bit
         StateDef(
+            doc = "Stop Bit",
             cond = Cond.ALWAYS,
             output_opcode = OutputOpcode(const_0 = True),
             repeat_state = False,
@@ -688,6 +793,7 @@ async def uart_tx_test(dut):
             jump_target = 1
         ),
         StateDef(
+            doc = "Ready",
             cond = Cond.IN_0,
             output_opcode = OutputOpcode(
                 const_0 = True,
@@ -705,6 +811,7 @@ async def uart_tx_test(dut):
             jump_target = 0
         ),
         StateDef(
+            doc = "Wait for Clock",
             cond = Cond.ALWAYS,
             output_opcode = OutputOpcode(const_0 = True),
             repeat_state = False,
@@ -717,6 +824,7 @@ async def uart_tx_test(dut):
         ),
         # Start Bit & Compute Parity
         StateDef(
+            doc = "Start Bit & Compute Parity",
             cond = Cond.ALWAYS,
             output_opcode = OutputOpcode(
                 const_0 = False
@@ -732,6 +840,7 @@ async def uart_tx_test(dut):
         ),
         # Send Data & Parity
         StateDef(
+            doc = "Send",
             cond = Cond.IS_ZERO_0,
             output_opcode = OutputOpcode(mode = OutputMode.BufferLSB),
             repeat_state = True,
@@ -745,7 +854,7 @@ async def uart_tx_test(dut):
             ),
             jump_target = 0
         )
-    ]))
+    ], path="uart_tx.dot"))
 
     await NextTimeStep()
     dut.ui_in[0].value = 1

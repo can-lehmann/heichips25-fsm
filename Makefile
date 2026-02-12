@@ -192,6 +192,10 @@ boolean.frames: boolean.fasm
 boolean.bit: boolean.frames
 	xc7frames2bit --part_file ${PRJXRAY_DB_DIR}/spartan7/xc7s50csga324-1/part.yaml --part_name xc7s50csga324-1 --frm_file $< --output_file $@
 
+tb/sim_build/%.svg: tb/sim_build/%.dot
+	dot -Tsvg $< -o $@
+
+all-dot: $(patsubst tb/sim_build/%.dot, tb/sim_build/%.svg, $(wildcard tb/sim_build/*.dot))
 
 # Common
 

@@ -21,6 +21,20 @@ Each state may have up to 2 outgoing transitions, with one extended state suppor
 A slow mode allows dividing the clock using the second counter register, effectively allowing for an additional loop transition based on the second counter register for each state.
 Outputs depend on the current state (Moore machine).
 
+## Gallery
+
+### 16-bit Serializer
+
+![16-bit Serializer](doc/serialize16.svg)
+
+### Pulse Width Modulation (PWM)
+
+![PWM](doc/pwm_3_2.svg)
+
+### UART TX with Parity Bit
+
+![UART TX](doc/uart_tx.svg)
+
 ## License
 
 The code in this repository is licensed under Apache 2.0.
