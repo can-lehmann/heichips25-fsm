@@ -665,6 +665,152 @@ async def pwm_test(dut):
 
             pwm_value = next_pwm_value
 
+@cocotb.test()
+async def uart_tx_test(dut):
+    clock = Clock(dut.clk, 10, 'ns')
+    await cocotb.start(clock.start())
+
+    await setup(dut)
+    await load_program(dut, assemble({
+        0: 8, # 8 bit + 1 parity bit
+        1: 3 # Clock divider for baud rate generation
+    }, [
+        # Stop Bit
+        StateDef(
+            cond = Cond.ALWAYS,
+            output_opcode = OutputOpcode(const_0 = True),
+            repeat_state = False,
+            slow_mode = True,
+            then_action = Action(
+                counter = CounterAction.RESET_1
+            ),
+            else_action = Action(),
+            jump_target = 1
+        ),
+        StateDef(
+            cond = Cond.IN_0,
+            output_opcode = OutputOpcode(
+                const_0 = True,
+                const_1 = True
+            ),
+            repeat_state = False,
+            slow_mode = False,
+            then_action = Action(
+                counter = CounterAction.DECR_1
+            ),
+            else_action = Action(
+                alu = AluAction.LOAD_DATA_IN,
+                counter = CounterAction.DECR_1
+            ),
+            jump_target = 0
+        ),
+        StateDef(
+            cond = Cond.ALWAYS,
+            output_opcode = OutputOpcode(const_0 = True),
+            repeat_state = False,
+            slow_mode = True,
+            then_action = Action(
+                counter = CounterAction.RESET_1
+            ),
+            else_action = Action(),
+            jump_target = 3
+        ),
+        # Start Bit & Compute Parity
+        StateDef(
+            cond = Cond.ALWAYS,
+            output_opcode = OutputOpcode(
+                const_0 = False
+            ),
+            repeat_state = False,
+            slow_mode = True,
+            then_action = Action(
+                alu = AluAction.PARITY,
+                counter = CounterAction.RESET_BOTH
+            ),
+            else_action = Action(),
+            jump_target = 4
+        ),
+        # Send Data & Parity
+        StateDef(
+            cond = Cond.IS_ZERO_0,
+            output_opcode = OutputOpcode(mode = OutputMode.BufferLSB),
+            repeat_state = True,
+            slow_mode = True,
+            then_action = Action(
+                counter = CounterAction.RESET_BOTH
+            ),
+            else_action = Action(
+                alu = AluAction.SHIFT_RIGHT_ZERO,
+                counter = CounterAction.DECR_0_RESET_1
+            ),
+            jump_target = 0
+        )
+    ]))
+
+    await NextTimeStep()
+    dut.ui_in[0].value = 1
+
+    await ClockCycles(dut.clk, 12)
+
+    text = "Hello, world!"
+    recv = ""
+    index = 0
+
+    started_recv = False
+    bits = []
+    clock_cycle = 0
+
+    prev_bit = None
+
+    while True:
+        if clock_cycle > 1000:
+            assert False, f"Timeout while waiting for transmission to complete. Received so far: '{recv}'"
+        
+        await NextTimeStep()
+
+        if dut.uo_out[1].value:
+            if index >= len(text):
+                break
+            dut.uio_in.value = ord(text[index])
+            dut.ui_in[0].value = 0
+            index += 1
+        else:
+            dut.ui_in[0].value = 1
+
+        await ClockCycles(dut.clk, 1)
+        await ReadOnly()
+
+        if clock_cycle % 4 == 0:
+            if not started_recv:
+                if dut.uo_out[0].value == 0:
+                    started_recv = True
+                    bits = []
+            else:
+                bits.append(dut.uo_out[0].value)
+
+                if len(bits) == 9:
+                    byte = 0
+                    for it in range(8):
+                        byte |= (bits[it] << it)
+                    parity_bit = bits[8]
+                    assert parity_bit == (bin(byte).count("1") % 2), f"Parity error for byte {byte}, bits: {bits}"
+                    recv += chr(byte)
+                    print(f"Received byte: {byte} ('{chr(byte)}'), bits: {bits}")
+                    
+                    bits = []
+                    started_recv = False
+        
+        if prev_bit is None:
+            prev_bit = (dut.uo_out[0].value, clock_cycle)
+        elif dut.uo_out[0].value != prev_bit[0]:
+            assert (clock_cycle - prev_bit[1]) % 4 == 0, f"Bit changed at unexpected time. Previous bit: {prev_bit[0]} at cycle {prev_bit[1]}, current bit: {dut.uo_out[0].value} at cycle {clock_cycle}"
+            prev_bit = (dut.uo_out[0].value, clock_cycle)
+
+        clock_cycle += 1
+    
+    assert recv == text, f"Expected to receive '{text}' but got '{recv}' after {clock_cycle} clock cycles"
+            
+
 """
 # Ensure the otuput is 0x00
 assert dut.uo_out.value == 0, "Output is not 0!"

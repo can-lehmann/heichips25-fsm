@@ -98,7 +98,7 @@ module AluBuffer #(
       case (opcode)
         3'b000: ; // NOP
         3'b001: buffer <= {buffer[WIDTH - 1 - 8:0], data_in};
-        3'b010: buffer[8] <= ~^buffer[7:0];
+        3'b010: buffer[8] <= ^buffer[7:0];
         3'b011: buffer <= 0;
         3'b100: buffer <= {1'b0, buffer[WIDTH-1:1]};
         3'b101: buffer <= {data_in[0], buffer[WIDTH-1:1]};
