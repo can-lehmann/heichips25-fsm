@@ -31,7 +31,7 @@
 <path fill="none" stroke="black" d="M113.98,-93.39C171.72,-93.39 262.25,-93.39 328.51,-93.39"/>
 <polygon fill="black" stroke="black" points="328.24,-96.89 338.24,-93.39 328.24,-89.89 328.24,-96.89"/>
 <text text-anchor="middle" x="226.75" y="-138.59" font-family="Noto Sans" font-size="14.00">if counter_0 == 0</text>
-<text text-anchor="middle" x="226.75" y="-119.09" font-family="Noto Sans" font-size="14.00">buf = data_in</text>
+<text text-anchor="middle" x="226.75" y="-119.09" font-family="Noto Sans" font-size="14.00">buf = {buf[15:0], data_in}</text>
 <text text-anchor="middle" x="226.75" y="-99.59" font-family="Noto Sans" font-size="14.00">counter_0 = 2</text>
 </g>
 <!-- s0&#45;&gt;s1 -->

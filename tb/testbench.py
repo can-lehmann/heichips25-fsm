@@ -130,7 +130,7 @@ class Action:
 
         match self.alu:
             case AluAction.NOP: pass
-            case AluAction.LOAD_DATA_IN: cmds.append("buf = data_in")
+            case AluAction.LOAD_DATA_IN: cmds.append("buf = {buf[15:0], data_in}")
             case AluAction.PARITY: cmds.append("buf = parity(buf)")
             case AluAction.CLEAR_BUFFER: cmds.append("buf = 0")
             case AluAction.SHIFT_RIGHT_ZERO: cmds.append("buf >>= 1")
